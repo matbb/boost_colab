@@ -9,6 +9,8 @@ setup(
     author_email='me@matbb.org',
     license='MIT',
     packages=['boost_colab'],
+    download_url = 'https://github.com/matbb/boost_colab/archive/refs/tags/v0.5.0.tar.gz',
+    keywords = [ "Colab", "jupyter", ],
     install_requires=[
         "requests>=2.23",
     ],
