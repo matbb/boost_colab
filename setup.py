@@ -1,15 +1,17 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from setuptools import setup
 
 setup(
     name='boost_colab',
-    version='0.5.0',
+    version='0.5.2',
     description='Boost your productivity with Google Colab',
-    url='https://github.com/shuds13/pyexample',
+    url='https://github.com/matbb/boost_colab',
     author='Matjaž Berčič',
     author_email='me@matbb.org',
     license='MIT',
     packages=['boost_colab'],
-    download_url = 'https://github.com/matbb/boost_colab/archive/refs/tags/v0.5.0.tar.gz',
+    download_url = 'https://github.com/matbb/boost_colab/archive/refs/tags/v0.5.2.tar.gz',
     keywords = [ "Colab", "jupyter", ],
     install_requires=[
         "requests>=2.23",
