@@ -3,6 +3,8 @@ Easier Data Science with Google Colab
 
 Makes using Google Colab feel more like a job queue.
 
+Check example notebook on [Colab](https://colab.research.google.com/drive/1UHaCyJ3KigcFcTGfXcZwzg4SEfKqALDG?usp=sharing)
+
 Functions:
 * Quickly clone and install dependencies of your project.
 * Periodically sync back your progress to google drive
@@ -14,7 +16,7 @@ Functions:
 
 Example usage:
 ```python3
-!pip install git+ssh://git@github.com/matbb/boost_colab.git
+!pip install git+https://github.com/matbb/boost_colab.git
 import boost_colab
 
 if True:
@@ -23,7 +25,7 @@ if True:
 
 job_name = "test-job"
 data_project, data_job = boost_colab.initialize(
-  git_url="git@github.com/matbb/boost_colab.git",
+  git_url="https://github.com/matbb/boost_colab.git",
   job_name=job_name,
 )
 
@@ -45,14 +47,14 @@ with open(data_job + "/test.txt", "wt") as f_out:
     f_out.write("{:s} : Running sub-job {:d}".format(input_content, i_sub_job))
 
 
-boost_colab.stop_execution()
+boost_colab.stop_interactive_nb()
 # This will not run. Useful to stop execution 
 # after this line when selecting "run all cells" in notebook
 
 with open(data_job + "/test_after_exit.txt", "wt") as f_out:
     f_out.write("{:s} : Running sub-job {:d}".format(input_content, i_sub_job))
 ```
-ran from a notebook named "01-mb-test-colab-boost-v01.ipynb" stored in folder `notebooks` in your project,
+ran from a notebook named "01-mb-test-boost-colab-test-job.ipynb" stored in folder `notebooks` in your project,
 where the input file
 ```
 colab_data/<project name>/data_project/test_input_file.txt
@@ -106,8 +108,8 @@ pip install nbconvert
 Uploading notebook with
 ```python
 python3 -m boost_colab --verbose \
-  --local-filename=./notebooks/01-mb-test.ipynb \
-  --job-name=test-job-42 \
+  --local-filename=./notebooks/01-mb-test-boost-colab.ipynb \
+  --job-name=test-job \
   --high-ram \
   --accelerator=gpu \
   --background-execution

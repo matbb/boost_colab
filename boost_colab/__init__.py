@@ -1,3 +1,24 @@
+"""
+Easier Data Science with Google Colab
+
+Simplifies project initialization from git and periodic data sync back to Google Drive.
+
+Module variables set during session initialization:
+CURRENT_SESSION : Current session type
+CURRENT_PROJECT_NAME : Name of initialized project
+CURRENT_PROJECT_PATH = Path to initialized project on disk 
+CURRENT_MOUNTED_DATA_JOB_PATH = Path to project's data_job folder
+CURRENT_MOUNTED_DATA_PROJECT_PATH = Path to project's data_project folder
+
+set_logging(level) : sets logging to stdout at specified log level
+identify_session() : identifies where current session is running
+initialize(...) : initializes current project
+run_sub_jobs(...) : runs specified number of sub-jobs in current session on Colab
+decompress_if_not_exists(fname_zip) : unzips the file if decompressed file does not exist
+compress_file(fname) : compresses the file with zip
+stop_interactive_nb() : Stops interactive notebook execution by throwing an exception, 
+    does nothing if not in interactive notebook
+"""
 import subprocess
 import threading
 from pathlib import Path
@@ -6,8 +27,31 @@ from tkinter import CURRENT
 import requests
 import re
 import datetime
+import urllib.parse
 
 import logging
+
+JOB_ENV_VAR = "BOOST_COLAB_JOB_NAME"
+SUB_JOB_ENV_VAR = "SUB_JOB_ID"
+SUB_JOB_FOLDER_NAME = "sub_job"
+SUB_JOB_FOLDER_FMT = SUB_JOB_FOLDER_NAME + "_{:03d}"
+
+SYNC_THREAD = None
+SYNC_STOP = False
+SYNC_RSYNC_FLAGS = [
+    "-av",
+    "--delete",
+]
+
+# Current session type
+CURRENT_SESSION = None
+# Project name derived from git url
+CURRENT_PROJECT_NAME = None
+# Project path on disk
+CURRENT_PROJECT_PATH = None
+# Paths to data_job and data_project in Google Drive mounted folder
+CURRENT_MOUNTED_DATA_JOB_PATH = None
+CURRENT_MOUNTED_DATA_PROJECT_PATH = None
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -28,7 +72,7 @@ except ImportError:
     logger.warning("WARNING: not running on Colab")
 
 
-def print_subprocess_error(msg, p):
+def _print_subprocess_error(msg, p):
     for f_print in [print, logger.error]:
         f_print(msg)
         f_print(
@@ -42,46 +86,30 @@ def print_subprocess_error(msg, p):
         )
 
 
-def run_check_ok(cmd_list, msg, throw=False):
+def _run_check_ok(cmd_list, msg, throw=False):
     p = subprocess.run(
         cmd_list,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
     )
     if p.returncode != 0:
-        print_subprocess_error(msg, p)
+        _print_subprocess_error(msg, p)
         if throw:
             raise RuntimeError(msg)
         return False
     return True
 
 
-JOB_ENV_VAR = "BOOST_COLAB_JOB_NAME"
-SUB_JOB_ENV_VAR = "SUB_JOB_ID"
-SUB_JOB_FOLDER_NAME = "sub_job"
-SUB_JOB_FOLDER_FMT = SUB_JOB_FOLDER_NAME + "_{:03d}"
-
-SYNC_THREAD = None
-SYNC_STOP = False
-SYNC_RSYNC_FLAGS = [
-    "-av",
-    "--delete",
-]
-
-CURRENT_SESSION = None
-CURRENT_PROJECT_NAME = None
-CURRENT_PROJECT_PATH = None
-
-
 def identify_session():
     """
     Identify current session.
-    Returns:
-        colab         : for session on google colab through its web interface
-        remote-colab  : for remote kernell connection to colab
-        notebook-qtconsole      : jupyter notebook or qtconsole
-        ipython       : ipython running in shell (not qtconsole)
-        other         : other
+
+        Returns:
+            colab                   : for session on google colab through its web interface
+            remote-colab            : for remote kernell connection to colab
+            notebook-qtconsole      : jupyter notebook or qtconsole
+            ipython                 : ipython running in shell (not qtconsole)
+            other                   : other
     """
 
     try:
@@ -129,6 +157,15 @@ def _sync_mount_google_drive(
     and periodically sync files between sync_mounted_path and sync_local_path using rsync
 
     Returns after initial sync is done.
+
+        Parameters:
+            mount_point       : where Google Drive should be mounted
+            sync_mounted_path : path inside Google Drive that is synced to local storage
+            sync_local_path   : path outside Google Drive on local disk
+            sync_interval_s   : sync interval in seconds
+
+        Returns:
+            None
     """
     global SYNC_THREAD, SYNC_STOP, SYNC_RSYNC_FLAGS
     logger.debug("Started background sync thread launch")
@@ -180,10 +217,10 @@ def _sync_mount_google_drive(
                     fs_to,
                 ],
             )
-            if p.returncode not in [0,24]:
+            if p.returncode not in [0, 24]:
                 # Ignoring return codes:
                 # 24: files are deleted on source before sync is finished
-                print_subprocess_error("Synchronization loop: Error in sync", p)
+                _print_subprocess_error("Synchronization loop: Error in sync", p)
             if lock.locked():
                 lock.release()
             time.sleep(sync_interval_s)
@@ -207,12 +244,31 @@ def initialize(
     rsync_flags=None,
     sync_interval_s=30,
     force=False,
+    project_name=None,
 ):
-    # if session is not first run in colab (no job name env variable, no subjob env variable)
-    # then just change workdir and exit with a message.
-    # If we are on colab, then cd to "notebooks" folder.
-    # If this is first such session (folder with project name does not exist yet)
-    # then we initialize, otherwise we exit
+    """
+    On Colab:
+    Initializes project from git to /content/<project name> and starts periodic sync.
+    If git_url is not set to None, project name is derived from git_url.
+    If requirements file is not set to None, requirements are installed from within the project with pip.
+    If notebooks folder is provided, changes working dir to that folder inside the project.
+
+    If running outside Colab:
+    Sets project path and returns.
+
+        Parameters:
+            git_url           : git compatible url, passed to git_clone
+            job_name          : name of current job
+            requirements_file : requirements file to install with pip relative to project root
+            notebooks_folder  : folder at project root where notebooks are stored
+            rsync_flags       : flags to pass to rsync when synchronizing project data to Google Drive
+            sync_interval_s   : sync interval in seconds
+            project_name      : project name, used in case git_url is None
+            force             : force initialization
+
+        Returns:
+            ( data_project, data_job ) : tuple of path strings to locations of where project shared data (ro) is stored, and where data from current job is stored
+    """
     global SYNC_RSYNC_FLAGS
     global CURRENT_PROJECT_NAME, CURRENT_SESSION, CURRENT_PROJECT_PATH
     if rsync_flags is not None:
@@ -220,17 +276,30 @@ def initialize(
 
     session = identify_session()
     CURRENT_SESSION = session
-    project_name = re.match("^.*/([^/]*)$", git_url).groups()[0]
-    project_name = project_name[0:-4] if project_name.endswith(".git") else project_name
+    if git_url is not None:
+        project_name = re.match("^.*/([^/]*)$", git_url).groups()[0]
+        project_name = (
+            project_name[0:-4] if project_name.endswith(".git") else project_name
+        )
+    elif project_name is None:
+        print("Error: if git_url is None, project_name has to be supplied")
+        logger.error("Error: if git_url is None, project_name has to be supplied")
+        return
     CURRENT_PROJECT_NAME = project_name
     project_path = os.path.join("/content", project_name)
     CURRENT_PROJECT_PATH = project_path
     data_project = os.path.join(project_path, "data_project")
     data_job = os.path.join(project_path, "data_job")
 
+    def chdir_to_notebooks():
+        if notebooks_folder is None:
+            os.chdir(os.path.join("/content", project_name))
+        else:
+            os.chdir(os.path.join("/content", project_name, notebooks_folder))
+
     if session in ["colab", "remote-colab"]:
         if os.path.exists(project_path) and force == False:
-            os.chdir(os.path.join("/content", project_name, notebooks_folder))
+            chdir_to_notebooks()
             if force == False:
                 print("Initialization skipped: Already initialized on Colab")
                 return data_project, data_job
@@ -250,30 +319,36 @@ def initialize(
         os.environ[JOB_ENV_VAR] = job_name
     else:
         print("Initialization skipped: Not running inside Colab")
-        CURRENT_PROJECT_PATH = str(Path("..").absolute())
-        return str(Path("../data_project").absolute()), str(
-            Path("../data_job").absolute()
+        wd_project = "." if notebooks_folder is None else ".."
+        CURRENT_PROJECT_PATH = str(Path(wd_project).absolute())
+        return str(Path(wd_project + "/data_project").absolute()), str(
+            Path(wd_project + "/data_job").absolute()
         )
 
     logger.info("Initialization started")
-    # git clone project (print stdout, stderr)
-    run_check_ok(
-        cmd_list=["git", "clone", git_url, project_path],
-        msg="Error inicializing from git",
-        throw=True,
-    )
-    os.chdir(os.path.join("/content", project_name, notebooks_folder))
-    logger.info("Initialization: git clone complete")
+    if git_url is not None:
+        # git clone project (print stdout, stderr)
+        _run_check_ok(
+            cmd_list=["git", "clone", git_url, project_path],
+            msg="Error inicializing from git",
+            throw=True,
+        )
+        logger.info("Initialization: git clone complete")
+    else:
+        logger.info("Skipping initialization from git")
+    chdir_to_notebooks()
 
     # sync mount
+    global CURRENT_MOUNTED_DATA_JOB_PATH
+    CURRENT_MOUNTED_DATA_JOB_PATH = os.path.join(
+        "/content/drive/MyDrive/colab_data",
+        project_name,
+        "data_job",
+        job_name,
+    )
     _sync_mount_google_drive(
         mount_point="/content/drive",
-        sync_mounted_path=os.path.join(
-            "/content/drive/MyDrive/colab_data",
-            project_name,
-            "data_job",
-            job_name,
-        ),
+        sync_mounted_path=CURRENT_MOUNTED_DATA_JOB_PATH,
         sync_local_path=project_path + "/data_job",
         sync_interval_s=sync_interval_s,
     )
@@ -281,7 +356,8 @@ def initialize(
 
     # sync data_project
     sync_local_path = project_path + "/data_project"
-    sync_mounted_path = (
+    global CURRENT_MOUNTED_DATA_PROJECT_PATH
+    CURRENT_MOUNTED_DATA_PROJECT_PATH = (
         os.path.join(
             "/content/drive/MyDrive/colab_data",
             project_name,
@@ -290,14 +366,14 @@ def initialize(
         + "/"
     )
     Path(sync_local_path).mkdir(parents=True, exist_ok=True)
-    Path(sync_mounted_path).mkdir(parents=True, exist_ok=True)
-    run_check_ok(
+    Path(CURRENT_MOUNTED_DATA_PROJECT_PATH).mkdir(parents=True, exist_ok=True)
+    _run_check_ok(
         cmd_list=[
             "rsync",
         ]
         + SYNC_RSYNC_FLAGS
         + [
-            sync_mounted_path,
+            CURRENT_MOUNTED_DATA_PROJECT_PATH,
             sync_local_path,
         ],
         msg="Error initially syncing data_project",
@@ -310,7 +386,7 @@ def initialize(
         requirements_full_path = os.path.join(
             "/content", project_name, requirements_file
         )
-        run_check_ok(
+        _run_check_ok(
             cmd_list=["pip", "install", "-r", requirements_full_path],
             msg="Error installing requirements from pip",
             throw=True,
@@ -326,7 +402,6 @@ def run_sub_jobs(
     data_job,
     first_job_to_run=0,
     completion_file=None,
-    ignore_killed_sub_jobs=False,
 ):
     """
     Runs specified number of sessions.
@@ -337,7 +412,6 @@ def run_sub_jobs(
     in sequnece 0, ... n_sub_jobs-1
     If first_job_to_run is provided, subjobs start with this index to n_sub_jobs-1
     If completion_file is provided, jobs where this file exists in sub-job folder are skipped.
-    If ignore_killed_sub_jobs=True no error is reported if sub-job is killed (useful if notebook uses stop_execution)
 
     In main session, function waits untill all sub jobs are complete and finally returns with n_sub_jobs.
 
@@ -347,6 +421,15 @@ def run_sub_jobs(
     Presumptions: google drive is mounted in /content/drive
     and the current notebook is the script with the same name in the Colab Notebooks folder
     in google drive.
+
+        Parameters:
+            n_sub_jobs       : number of sub jobs to run
+            data_job         :  data_job folder before sub-jobs are started
+            first_job_to_run : if set jobs before this one are skipped
+            completion_file  : if set, when this file exists inside sub-job folder, sub-job is skipped
+
+        Returns:
+            ( i_current_job, data_job ) : tuple index of current job, data_job for current sub-job
     """
 
     def get_sub_job_folder(i_sub_job):
@@ -366,8 +449,10 @@ def run_sub_jobs(
 
     current_env = {k: v for k, v in os.environ.items()}
     nb_filename = requests.get("http://172.28.0.2:9000/api/sessions").json()[0]["name"]
+    nb_filename = urllib.parse.unquote(nb_filename)
     nb_full_path = "/content/drive/MyDrive/Colab Notebooks/" + nb_filename
     current_env = {k: v for k, v in os.environ.items()}
+    dt_started_run = datetime.datetime.now()
     for i_sub_job in range(n_sub_jobs):
         if i_sub_job < first_job_to_run:
             logger.info(
@@ -391,6 +476,7 @@ def run_sub_jobs(
         with open(data_job + "/current_sub_job_is.txt", "wt") as f:
             f.write("{:d}\n".format(i_sub_job))
             f.write("Sub-job started at : " + str(datetime.datetime.now()) + "\n")
+            f.write("Group started at   : " + str(dt_started_run) + "\n")
 
         current_env[SUB_JOB_ENV_VAR] = str(i_sub_job)
         logger.info("Creating sub-job folder: " + sub_job_folder)
@@ -418,21 +504,8 @@ def run_sub_jobs(
             )
         )
         if p.returncode != 0:
-            kernel_died = (
-                "nbconvert.preprocessors.execute.DeadKernelError: Kernel died"
-                in p.stderr.decode("ascii")
-            )
-
-            if kernel_died and ignore_killed_sub_jobs == False:
-                print_subprocess_error(
-                    "Sub-job id {:d} : Kernel died, this might be expected".format(
-                        i_sub_job
-                    ),
-                    p,
-                )
-            if not kernel_died:
-                print_subprocess_error("Sub-job id {:d} : Error".format(i_sub_job), p)
-                break
+            _print_subprocess_error("Sub-job id {:d} : Error".format(i_sub_job), p)
+            break
 
         time.sleep(1.0)  # Wait for FS sync
 
@@ -445,26 +518,38 @@ def run_sub_jobs(
     return n_sub_jobs, data_job
 
 
-def decompress_if_not_exists(fname):
-    fout = fname.replace(".zip", "")
+def decompress_if_not_exists(fname_zip):
+    """
+    De-compresses file with zip utility if decompressed file does not exist.
+    Does nothing if decompressed file already exists.
+
+        Parameters:
+            fname: file to decompress, ends with .zip
+        Returns:
+            file name of decompressed file
+    """
+    fout = fname_zip.replace(".zip", "")
     fout_folder = os.path.split(fout)[0]
 
     if not os.path.isfile(fout):
-        print("De compressing ", fname, " -> ", fout, " # ", fout_folder)
-        run_check_ok(
-            ["unzip", "-j", fname, "-d", fout_folder], msg="zip decompression error"
+        print("De compressing ", fname_zip, " -> ", fout, " # ", fout_folder)
+        _run_check_ok(
+            ["unzip", "-j", fname_zip, "-d", fout_folder], msg="zip decompression error"
         )
 
     return fout
 
 
 def compress_file(fname):
+    """
+    Compresses file with zip utility.
+    """
     print("Compressing file ", fname)
     fout = fname + ".zip"
-    run_check_ok(["zip", "-j", fout, fname], msg="zip compression error")
+    _run_check_ok(["zip", "-j", fout, fname], msg="zip compression error")
 
 
-class StopExecution(Exception):
+class _StopExecution(Exception):
     def _render_traceback_(self):
         pass
 
@@ -484,4 +569,4 @@ def stop_interactive_nb():
         return
     logger.info("Intentionally stopping notebook execution")
     print("Intentionally stopping notebook execution")
-    raise StopExecution
+    raise _StopExecution
