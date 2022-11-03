@@ -518,7 +518,7 @@ def run_sub_jobs(
     return n_sub_jobs, data_job
 
 
-def decompress_if_not_exists(fname_zip):
+def decompress_if_not_exists(fname_zip, archive="zip"):
     """
     De-compresses file with zip utility if decompressed file does not exist.
     Does nothing if decompressed file already exists.
@@ -528,25 +528,43 @@ def decompress_if_not_exists(fname_zip):
         Returns:
             file name of decompressed file
     """
-    fout = fname_zip.replace(".zip", "")
+    assert archive in ["zip", "gz"]
+    fout = fname_zip.replace("." + archive, "")
     fout_folder = os.path.split(fout)[0]
 
     if not os.path.isfile(fout):
         print("De compressing ", fname_zip, " -> ", fout, " # ", fout_folder)
-        _run_check_ok(
-            ["unzip", "-j", fname_zip, "-d", fout_folder], msg="zip decompression error"
-        )
+        if archive == "zip":
+            _run_check_ok(
+                ["unzip", "-j", fname_zip, "-d", fout_folder],
+                msg="zip decompression error",
+            )
+        else:
+            _run_check_ok(
+                [
+                    "gunzip",
+                    fname_zip,
+                ],
+                msg="gzip decompression error",
+            )
 
     return fout
 
 
-def compress_file(fname):
+def compress_file(fname, archive="zip"):
     """
     Compresses file with zip utility.
     """
+    assert archive in [
+        "zip",
+        "gz",
+    ]
     print("Compressing file ", fname)
-    fout = fname + ".zip"
-    _run_check_ok(["zip", "-j", fout, fname], msg="zip compression error")
+    fout = fname + "." + archive
+    if archive == "zip":
+        _run_check_ok(["zip", "-j", fout, fname], msg="zip compression error")
+    else:
+        _run_check_ok(["gzip", fname], msg="gzip compression error")
 
 
 class _StopExecution(Exception):
