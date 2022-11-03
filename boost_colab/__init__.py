@@ -28,6 +28,7 @@ import requests
 import re
 import datetime
 import urllib.parse
+import shutil
 
 import logging
 
@@ -52,6 +53,9 @@ CURRENT_PROJECT_PATH = None
 # Paths to data_job and data_project in Google Drive mounted folder
 CURRENT_MOUNTED_DATA_JOB_PATH = None
 CURRENT_MOUNTED_DATA_PROJECT_PATH = None
+# Paths to data_job and data_project as returned during initialization
+CURRENT_LOCAL_DATA_JOB_PATH = None
+CURRENT_LOCAL_DATA_PROJECT_PATH = None
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -288,8 +292,11 @@ def initialize(
     CURRENT_PROJECT_NAME = project_name
     project_path = os.path.join("/content", project_name)
     CURRENT_PROJECT_PATH = project_path
-    data_project = os.path.join(project_path, "data_project")
-    data_job = os.path.join(project_path, "data_job")
+
+    global CURRENT_LOCAL_DATA_JOB_PATH, CURRENT_LOCAL_DATA_PROJECT_PATH
+
+    CURRENT_LOCAL_DATA_PROJECT_PATH = os.path.join(project_path, "data_project")
+    CURRENT_LOCAL_DATA_JOB_PATH = os.path.join(project_path, "data_job")
 
     def chdir_to_notebooks():
         if notebooks_folder is None:
@@ -302,12 +309,12 @@ def initialize(
             chdir_to_notebooks()
             if force == False:
                 print("Initialization skipped: Already initialized on Colab")
-                return data_project, data_job
+                return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
             elif SUB_JOB_ENV_VAR in os.environ:
                 print(
                     "Initialization skipped: Already initialized on Colab and in sub job"
                 )
-                return data_project, data_job
+                return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
         for fname in [
             "/etc/environment",
             "/etc/profile",
@@ -321,9 +328,11 @@ def initialize(
         print("Initialization skipped: Not running inside Colab")
         wd_project = "." if notebooks_folder is None else ".."
         CURRENT_PROJECT_PATH = str(Path(wd_project).absolute())
-        return str(Path(wd_project + "/data_project").absolute()), str(
-            Path(wd_project + "/data_job").absolute()
+        CURRENT_LOCAL_DATA_PROJECT_PATH = str(
+            Path(wd_project + "/data_project").absolute()
         )
+        CURRENT_LOCAL_DATA_JOB_PATH = str(Path(wd_project + "/data_job").absolute())
+        return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
 
     logger.info("Initialization started")
     if git_url is not None:
@@ -394,7 +403,7 @@ def initialize(
     logger.info("Initialization: requirements installed")
 
     print("Successfully initialized the project")
-    return data_project, data_job
+    return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
 
 
 def run_sub_jobs(
@@ -588,3 +597,38 @@ def stop_interactive_nb():
     logger.info("Intentionally stopping notebook execution")
     print("Intentionally stopping notebook execution")
     raise _StopExecution
+
+
+def copy_to_cloud_gdrive(local_data_fname_path):
+    """
+    Copies a file to data_project folder inside mounted gdrive.
+    :param local_data_fname_path: local file path, relative to data_job folder
+    """
+    if CURRENT_MOUNTED_DATA_PROJECT_PATH is not None:
+        src = os.path.join(CURRENT_LOCAL_DATA_JOB_PATH, local_data_fname_path)
+        dst = os.path.join(CURRENT_MOUNTED_DATA_PROJECT_PATH, local_data_fname_path)
+        Path(os.path.dirname(dst)).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        logger.info(f"Copied file {local_data_fname_path} to cloud gdrive")
+    else:
+        logger.info(
+            f"Outside of colab: not copying {local_data_fname_path} to cloud gdrive"
+        )
+
+
+def copy_to_persistent_project_storage(local_data_fname_path):
+    """
+    Copies a file to persistent data_project folder:
+    - in colab / remote-colab: inside mounted gdrive
+    - otherwise: inside data_project
+    :param local_data_fname_path: local file path, relative to data_job folder
+    """
+    assert CURRENT_SESSION is not None
+    if CURRENT_SESSION in ["colab", "remote-colab"]:
+        copy_to_cloud_gdrive(local_data_fname_path)
+    else:
+        src = os.path.join(CURRENT_LOCAL_DATA_JOB_PATH, local_data_fname_path)
+        dst = os.path.join(CURRENT_LOCAL_DATA_PROJECT_PATH, local_data_fname_path)
+        Path(os.path.dirname(dst)).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        logger.info(f"Copied file {local_data_fname_path} to local data_project folder")
