@@ -275,6 +275,8 @@ def initialize(
     """
     global SYNC_RSYNC_FLAGS
     global CURRENT_PROJECT_NAME, CURRENT_SESSION, CURRENT_PROJECT_PATH
+    global CURRENT_LOCAL_DATA_JOB_PATH, CURRENT_LOCAL_DATA_PROJECT_PATH
+    global CURRENT_MOUNTED_DATA_JOB_PATH, CURRENT_MOUNTED_DATA_PROJECT_PATH
     if rsync_flags is not None:
         SYNC_RSYNC_FLAGS = rsync_flags
 
@@ -291,12 +293,11 @@ def initialize(
         return
     CURRENT_PROJECT_NAME = project_name
     project_path = os.path.join("/content", project_name)
-    CURRENT_PROJECT_PATH = project_path
+    CURRENT_PROJECT_PATH = project_path + "/"
 
-    global CURRENT_LOCAL_DATA_JOB_PATH, CURRENT_LOCAL_DATA_PROJECT_PATH
 
-    CURRENT_LOCAL_DATA_PROJECT_PATH = os.path.join(project_path, "data_project")
-    CURRENT_LOCAL_DATA_JOB_PATH = os.path.join(project_path, "data_job")
+    CURRENT_LOCAL_DATA_PROJECT_PATH = os.path.join(project_path, "data_project") + "/"
+    CURRENT_LOCAL_DATA_JOB_PATH = os.path.join(project_path, "data_job") + "/"
 
     def chdir_to_notebooks():
         if notebooks_folder is None:
@@ -330,8 +331,8 @@ def initialize(
         CURRENT_PROJECT_PATH = str(Path(wd_project).absolute())
         CURRENT_LOCAL_DATA_PROJECT_PATH = str(
             Path(wd_project + "/data_project").absolute()
-        )
-        CURRENT_LOCAL_DATA_JOB_PATH = str(Path(wd_project + "/data_job").absolute())
+        ) + "/"
+        CURRENT_LOCAL_DATA_JOB_PATH = str(Path(wd_project + "/data_job").absolute()) + "/"
         return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
 
     logger.info("Initialization started")
@@ -348,13 +349,12 @@ def initialize(
     chdir_to_notebooks()
 
     # sync mount
-    global CURRENT_MOUNTED_DATA_JOB_PATH
     CURRENT_MOUNTED_DATA_JOB_PATH = os.path.join(
         "/content/drive/MyDrive/colab_data",
         project_name,
         "data_job",
         job_name,
-    )
+    ) + "/"
     _sync_mount_google_drive(
         mount_point="/content/drive",
         sync_mounted_path=CURRENT_MOUNTED_DATA_JOB_PATH,
@@ -365,7 +365,6 @@ def initialize(
 
     # sync data_project
     sync_local_path = project_path + "/data_project"
-    global CURRENT_MOUNTED_DATA_PROJECT_PATH
     CURRENT_MOUNTED_DATA_PROJECT_PATH = (
         os.path.join(
             "/content/drive/MyDrive/colab_data",
@@ -388,6 +387,7 @@ def initialize(
         msg="Error initially syncing data_project",
         throw=True,
     )
+    CURRENT_MOUNTED_DATA_PROJECT_PATH += "/"
     logger.info("Initialization: initial data_project download complete")
 
     # pip install requirements if requirements are in project path
