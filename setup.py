@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='boost_colab',
-    version='0.5.2',
+    version='0.6.0',
     description='Boost your productivity with Google Colab',
     url='https://github.com/matbb/boost_colab',
     author='Matjaž Berčič',
