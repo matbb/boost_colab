@@ -1,2 +1,9 @@
 /data_job/
 /data_project/
+/.ropeproject
+\.*\.swp
+/.vscode
+/build
+/dist
+/boost_colab.egg-info/
+__pycache__/
