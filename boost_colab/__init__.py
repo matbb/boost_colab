@@ -90,12 +90,14 @@ def _print_subprocess_error(msg, p):
         )
 
 
-def _run_check_ok(cmd_list, msg, throw=False):
+def _run_check_ok(cmd_list, msg, throw=False, print_stdout=False):
     p = subprocess.run(
         cmd_list,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
     )
+    if print_stdout:
+        print(p.stdout.decode("ascii"))
     if p.returncode != 0:
         _print_subprocess_error(msg, p)
         if throw:
@@ -295,7 +297,6 @@ def initialize(
     project_path = os.path.join("/content", project_name)
     CURRENT_PROJECT_PATH = project_path + "/"
 
-
     CURRENT_LOCAL_DATA_PROJECT_PATH = os.path.join(project_path, "data_project") + "/"
     CURRENT_LOCAL_DATA_JOB_PATH = os.path.join(project_path, "data_job") + "/"
 
@@ -329,10 +330,12 @@ def initialize(
         print("Initialization skipped: Not running inside Colab")
         wd_project = "." if notebooks_folder is None else ".."
         CURRENT_PROJECT_PATH = str(Path(wd_project).absolute())
-        CURRENT_LOCAL_DATA_PROJECT_PATH = str(
-            Path(wd_project + "/data_project").absolute()
-        ) + "/"
-        CURRENT_LOCAL_DATA_JOB_PATH = str(Path(wd_project + "/data_job").absolute()) + "/"
+        CURRENT_LOCAL_DATA_PROJECT_PATH = (
+            str(Path(wd_project + "/data_project").absolute()) + "/"
+        )
+        CURRENT_LOCAL_DATA_JOB_PATH = (
+            str(Path(wd_project + "/data_job").absolute()) + "/"
+        )
         return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
 
     logger.info("Initialization started")
@@ -343,18 +346,33 @@ def initialize(
             msg="Error inicializing from git",
             throw=True,
         )
-        logger.info("Initialization: git clone complete")
+        logger.info("Initialization: git clone complete, last commit:")
+        chdir_to_notebooks()
+        _run_check_ok(
+            cmd_list=[
+                "git",
+                "log",
+                "--name-status",
+                "HEAD^..HEAD",
+            ],
+            msg="Error printing last commit",
+            throw=True,
+            print_stdout=True,
+        )
     else:
         logger.info("Skipping initialization from git")
-    chdir_to_notebooks()
+        chdir_to_notebooks()
 
     # sync mount
-    CURRENT_MOUNTED_DATA_JOB_PATH = os.path.join(
-        "/content/drive/MyDrive/colab_data",
-        project_name,
-        "data_job",
-        job_name,
-    ) + "/"
+    CURRENT_MOUNTED_DATA_JOB_PATH = (
+        os.path.join(
+            "/content/drive/MyDrive/colab_data",
+            project_name,
+            "data_job",
+            job_name,
+        )
+        + "/"
+    )
     _sync_mount_google_drive(
         mount_point="/content/drive",
         sync_mounted_path=CURRENT_MOUNTED_DATA_JOB_PATH,
