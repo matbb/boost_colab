@@ -300,11 +300,17 @@ def initialize(
     CURRENT_LOCAL_DATA_PROJECT_PATH = os.path.join(project_path, "data_project") + "/"
     CURRENT_LOCAL_DATA_JOB_PATH = os.path.join(project_path, "data_job") + "/"
 
-    def chdir_to_notebooks():
-        if notebooks_folder is None:
-            os.chdir(os.path.join("/content", project_name))
+    def chdir_to_notebooks(is_colab=True):
+        if is_colab:
+            if notebooks_folder is None:
+                os.chdir(os.path.join("/content", project_name))
+            else:
+                os.chdir(os.path.join("/content", project_name, notebooks_folder))
         else:
-            os.chdir(os.path.join("/content", project_name, notebooks_folder))
+            if notebooks_folder is None:
+                os.chdir(CURRENT_PROJECT_PATH)
+            else:
+                os.chdir(os.path.join(CURRENT_PROJECT_PATH, notebooks_folder))
 
     if session in ["colab", "remote-colab"]:
         if os.path.exists(project_path) and force == False:
@@ -336,6 +342,7 @@ def initialize(
         CURRENT_LOCAL_DATA_JOB_PATH = (
             str(Path(wd_project + "/data_job").absolute()) + "/"
         )
+        chdir_to_notebooks(is_colab=False)
         return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
 
     logger.info("Initialization started")
