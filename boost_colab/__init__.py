@@ -657,3 +657,17 @@ def copy_to_persistent_project_storage(local_data_fname_path):
         Path(os.path.dirname(dst)).mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         logger.info(f"Copied file {local_data_fname_path} to local data_project folder")
+
+
+def crash_kernel():
+    """
+    Crashes the kernel in order to force-stop execution and runtime.
+    Might save runtime credits.
+    """
+
+    import ctypes
+
+    p = ctypes.pointer(ctypes.c_char.from_address(5))
+    p[0] = b"x"
+
+
