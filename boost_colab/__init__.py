@@ -46,6 +46,7 @@ SYNC_RSYNC_FLAGS = [
     "-av",
     "--delete",
 ]
+SYNC_INTERVAL_S = None
 
 # Current session type
 CURRENT_SESSION = None
@@ -59,6 +60,10 @@ CURRENT_MOUNTED_DATA_PROJECT_PATH = None
 # Paths to data_job and data_project as returned during initialization
 CURRENT_LOCAL_DATA_JOB_PATH = None
 CURRENT_LOCAL_DATA_PROJECT_PATH = None
+
+sync_loop_event = threading.Event()
+sync_loop_count = 0
+
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -176,7 +181,7 @@ def _sync_mount_google_drive(
         Returns:
             None
     """
-    global SYNC_THREAD, SYNC_STOP, SYNC_RSYNC_FLAGS
+    global SYNC_THREAD, SYNC_STOP, SYNC_RSYNC_FLAGS, SYNC_INTERVAL_S
     logger.debug("Started background sync thread launch")
     try:
         if SYNC_THREAD is not None:
@@ -184,6 +189,7 @@ def _sync_mount_google_drive(
             SYNC_THREAD.join()
     except:
         pass
+    SYNC_INTERVAL_S = sync_interval_s
 
     if sync_mounted_path[-1] != "/":
         sync_mounted_path = sync_mounted_path + "/"
@@ -232,6 +238,8 @@ def _sync_mount_google_drive(
                 _print_subprocess_error("Synchronization loop: Error in sync", p)
             if lock.locked():
                 lock.release()
+            if p.returncode == 0:
+                sync_loop_event.set()
             time.sleep(sync_interval_s)
             if SYNC_STOP:
                 SYNC_THREAD = None
@@ -692,3 +700,19 @@ def crash_kernel():
 
     p = ctypes.pointer(ctypes.c_char.from_address(5))
     p[0] = b"x"
+
+
+def wait_for_sync():
+    """
+    Wait until data upload synchronization loop successfully executes at least 1 time
+
+    Returns False if sync is not running.
+    """
+    if SYNC_THREAD is None:
+        return False
+
+    sync_loop_event.clear()
+    for i in range(2):
+        sync_loop_event.wait()
+        time.sleep(SYNC_INTERVAL_S / 2)
+    return True
