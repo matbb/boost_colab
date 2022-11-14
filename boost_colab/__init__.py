@@ -19,18 +19,21 @@ compress_file(fname) : compresses the file with zip
 stop_interactive_nb() : Stops interactive notebook execution by throwing an exception, 
     does nothing if not in interactive notebook
 """
-import subprocess
-import threading
-from pathlib import Path
-import os, time, sys, signal
-from tkinter import CURRENT
-import requests
-import re
 import datetime
-import urllib.parse
-import shutil
-
 import logging
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+from pathlib import Path
+from tkinter import CURRENT
+
+import requests
 
 JOB_ENV_VAR = "BOOST_COLAB_JOB_NAME"
 SUB_JOB_ENV_VAR = "SUB_JOB_ID"
@@ -249,6 +252,7 @@ def initialize(
     notebooks_folder="notebooks",
     rsync_flags=None,
     sync_interval_s=30,
+    sync_data_project="full",
     force=False,
     project_name=None,
 ):
@@ -269,6 +273,11 @@ def initialize(
             notebooks_folder  : folder at project root where notebooks are stored
             rsync_flags       : flags to pass to rsync when synchronizing project data to Google Drive
             sync_interval_s   : sync interval in seconds
+            sync_data_project : how to sync data_project folder:
+                                   full : full sync with supplied rsync flags
+                                   TODO bindmount : mounts colab subfolder as readonly
+                                   <list of files> : sync only these files
+                                   no : do nothing
             project_name      : project name, used in case git_url is None
             force             : force initialization
 
@@ -400,18 +409,32 @@ def initialize(
     )
     Path(sync_local_path).mkdir(parents=True, exist_ok=True)
     Path(CURRENT_MOUNTED_DATA_PROJECT_PATH).mkdir(parents=True, exist_ok=True)
-    _run_check_ok(
-        cmd_list=[
-            "rsync",
-        ]
-        + SYNC_RSYNC_FLAGS
-        + [
-            CURRENT_MOUNTED_DATA_PROJECT_PATH,
-            sync_local_path,
-        ],
-        msg="Error initially syncing data_project",
-        throw=True,
-    )
+    if sync_data_project == "full":
+        _run_check_ok(
+            cmd_list=[
+                "rsync",
+            ]
+            + SYNC_RSYNC_FLAGS
+            + [
+                CURRENT_MOUNTED_DATA_PROJECT_PATH,
+                sync_local_path,
+            ],
+            msg="Error initially syncing data_project",
+            throw=True,
+        )
+    elif sync_data_project == "no":
+        pass
+    elif type(sync_data_project) == list:
+        for fname in sync_data_project:
+            f_src = os.path.join(CURRENT_MOUNTED_DATA_PROJECT_PATH, fname)
+            f_dst = os.path.join(sync_local_path, fname)
+            f_dirpath = os.path.dirname(f_dst)
+            os.makedirs(f_dirpath, exist_ok=True)
+            shutil.copy(f_src, f_dst)
+    else:
+        raise RuntimeError(
+            "Wrong argument for sync_data_project : " + sync_data_project
+        )
     CURRENT_MOUNTED_DATA_PROJECT_PATH += "/"
     logger.info("Initialization: initial data_project download complete")
 
@@ -669,5 +692,3 @@ def crash_kernel():
 
     p = ctypes.pointer(ctypes.c_char.from_address(5))
     p[0] = b"x"
-
-
