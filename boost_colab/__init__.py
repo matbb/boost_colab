@@ -352,7 +352,7 @@ def initialize(
     else:
         print("Initialization skipped: Not running inside Colab")
         wd_project = "." if notebooks_folder is None else ".."
-        CURRENT_PROJECT_PATH = str(Path(wd_project).absolute())
+        CURRENT_PROJECT_PATH = str(Path(wd_project).absolute()) + "/"
         CURRENT_LOCAL_DATA_PROJECT_PATH = (
             str(Path(wd_project + "/data_project").absolute()) + "/"
         )
