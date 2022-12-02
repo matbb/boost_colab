@@ -7,6 +7,13 @@ import re
 import tempfile
 import os
 
+
+def _get_project_name(git_url):
+    project_name = re.match("^.*/([^/]*)$", git_url).groups()[0].strip().rstrip()
+    project_name = project_name[0:-4] if project_name.endswith(".git") else project_name
+    return project_name
+
+
 try:
     import nbformat
 except ImportError:
@@ -44,6 +51,14 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--project-name",
+        required=False,
+        default=None,
+        type=str,
+        help="If set, script is uploaded in project's folder. If unset, project name is obtained from git url or set to no project",
+    )
+
+    parser.add_argument(
         "--rclone-remote-name",
         required=False,
         default="gdrivecolab",
@@ -52,6 +67,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "-v",
         "--verbose",
         default=False,
         action="store_true",
@@ -82,7 +98,6 @@ if __name__ == "__main__":
         help="Request a high-ram runtime",
     )
 
-
     args = parser.parse_args()
 
     logger = logging.getLogger()
@@ -91,20 +106,19 @@ if __name__ == "__main__":
     else:
         logger.setLevel(logging.CRITICAL)
 
-
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)s %(levelname)6s|%(process)5d| %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)6s|%(process)5d| %(message)s"
+    )
     ch.setFormatter(formatter)
     logger.addHandler(ch)
-
 
     def set_logging(start=True):
         if start:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.CRITICAL)
-
 
     colab_filename_parts = os.path.split(args.local_filename)
     colab_filename = colab_filename_parts[-1]
@@ -121,12 +135,30 @@ if __name__ == "__main__":
         colab_filename = "".join(parts[:-1] + ["-" + args.job_name] + ["." + parts[-1]])
 
         nb.cells[0]["source"] = re.sub(
-            JOB_NAME_PATTERN, r"\g<head>\g<quote>"+args.job_name+r"\g<quote>\g<tail>", nb.cells[0]["source"], flags=re.MULTILINE
+            JOB_NAME_PATTERN,
+            r"\g<head>\g<quote>" + args.job_name + r"\g<quote>\g<tail>",
+            nb.cells[0]["source"],
+            flags=re.MULTILINE,
         )
         if first_cell != nb.cells[0]["source"]:
             logger.info("First cell was updated with supplied job name:")
             if args.verbose:
                 print(nb.cells[0]["source"])
+
+    if args.project_name is None:
+        p = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+        if p.returncode != 0:
+            logger.error("Could not determine project name from git")
+            project_name = ""
+        else:
+            git_url = p.stdout.decode("ascii")
+            project_name = _get_project_name(git_url)
+    else:
+        project_name = args.project_name
 
     # Colab default "metadata" configuratio for colab
     notebook_metadata = {
@@ -138,6 +170,11 @@ if __name__ == "__main__":
         "kernelspec": {"display_name": "Python 3", "name": "python3"},
         "language_info": {"name": "python"},
     }
+
+    if project_name != "":
+        colab_full_filename = project_name + "/" + colab_filename
+    else:
+        colab_full_filename = colab_filename
 
     if args.accelerator is not None:
         if args.accelerator == "gpu":
@@ -165,9 +202,15 @@ if __name__ == "__main__":
                 "copyto",
                 "--progress",
                 ftmp_path,
-                "{:s}:Colab Notebooks/{:s}".format(args.rclone_remote_name,colab_filename),
+                "{:s}:Colab Notebooks/{:s}".format(
+                    args.rclone_remote_name, colab_full_filename
+                ),
             ],
         )
-        assert p.returncode == 0, "ERROR: install and configure rclone to use notebook upload functionallity"
+        assert (
+            p.returncode == 0
+        ), "ERROR: install and configure rclone to use notebook upload functionallity"
 
-    print("After starting the notebook user interaction is needed to mount google drive")
+    print(
+        "After starting the notebook user interaction is needed to mount google drive"
+    )
