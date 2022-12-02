@@ -14,6 +14,20 @@ def _get_project_name(git_url):
     return project_name
 
 
+def _get_git_project_name():
+    p = subprocess.run(
+        ["git", "config", "--get", "remote.origin.url"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    if p.returncode != 0:
+        logger.error("Could not determine project name from git")
+        return None
+    else:
+        git_url = p.stdout.decode("ascii")
+        return _get_project_name(git_url)
+
+
 try:
     import nbformat
 except ImportError:
@@ -28,8 +42,22 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--local-filename",
+        "--action",
         required=True,
+        type=str,
+        choices=[
+            "nbupload",
+            "pull-data-job",
+            "push-data-job",
+            "pull-data-project",
+            "push-data-project",
+        ],
+        help="Action to take: upload a notebook or pull/push data",
+    )
+
+    parser.add_argument(
+        "--local-filename",
+        required=False,
         type=str,
         help="Notebook to upload",
     )
@@ -120,97 +148,153 @@ if __name__ == "__main__":
         else:
             logger.setLevel(logging.CRITICAL)
 
-    colab_filename_parts = os.path.split(args.local_filename)
-    colab_filename = colab_filename_parts[-1]
-    if args.colab_filename is not None:
-        colab_filename = args.colab_filename
+    if args.action in [
+        "pull-data-job",
+        "push-data-job",
+        "pull-data-project",
+        "push-data-project",
+    ]:
+        project_name = args.project_name or _get_git_project_name()
+        if project_name is None or len(project_name) == 0:
+            logger.error(
+                "When pulling or pushing data project name must be set or obtainable from git"
+            )
+            sys.exit(1)
 
-    nb = nbformat.read(args.local_filename, as_version=nbformat.NO_CONVERT)
-
-    # Check if first cell matches pattern, if it does update the content, otherwise add a cell above current cell
-    if args.job_name is not None:
-        first_cell = nb.cells[0]["source"]
-
-        parts = colab_filename.split(".")
-        colab_filename = "".join(parts[:-1] + ["-" + args.job_name] + ["." + parts[-1]])
-
-        nb.cells[0]["source"] = re.sub(
-            JOB_NAME_PATTERN,
-            r"\g<head>\g<quote>" + args.job_name + r"\g<quote>\g<tail>",
-            nb.cells[0]["source"],
-            flags=re.MULTILINE,
+        colab_path = "{:s}:colab_data/{:s}/".format(
+            args.rclone_remote_name, project_name
         )
-        if first_cell != nb.cells[0]["source"]:
-            logger.info("First cell was updated with supplied job name:")
-            if args.verbose:
-                print(nb.cells[0]["source"])
 
-    if args.project_name is None:
-        p = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-        )
-        if p.returncode != 0:
-            logger.error("Could not determine project name from git")
-            project_name = ""
+        if "data-job" in args.action:
+            if not args.job_name:
+                logger.error("When using data-job, job_name must be specified")
+                sys.exit(1)
+            colab_path = colab_path + "data_job/{:s}/".format(args.job_name)
+            local_path = "data_job/"
         else:
-            git_url = p.stdout.decode("ascii")
-            project_name = _get_project_name(git_url)
-    else:
-        project_name = args.project_name
+            colab_path = colab_path + "data_project/"
+            local_path = "data_project/"
 
-    # Colab default "metadata" configuratio for colab
-    notebook_metadata = {
-        "colab": {
-            "collapsed_sections": [],
-            "name": colab_filename,
-            "provenance": [],
-        },
-        "kernelspec": {"display_name": "Python 3", "name": "python3"},
-        "language_info": {"name": "python"},
-    }
-
-    if project_name != "":
-        colab_full_filename = project_name + "/" + colab_filename
-    else:
-        colab_full_filename = colab_filename
-
-    if args.accelerator is not None:
-        if args.accelerator == "gpu":
-            notebook_metadata["accelerator"] = "GPU"
+        if "pull-" in args.action:
+            from_path = colab_path
+            to_path = local_path
         else:
-            notebook_metadata["accelerator"] = "TPU"
-
-    if args.high_ram:
-        notebook_metadata["colab"]["machine_shape"] = "hm"
-        pass
-
-    if args.background_execution:
-        notebook_metadata["colab"]["background_execution"] = "on"
-
-    nb.metadata = notebook_metadata
-
-    with tempfile.TemporaryDirectory() as tmp:
-        os.chmod(tmp, 0o777)
-        ftmp_path = os.path.join(tmp, colab_filename)
-        nbformat.write(nb, ftmp_path, version=nbformat.NO_CONVERT)
+            from_path = local_path
+            to_path = colab_path
 
         p = subprocess.run(
             [
                 "rclone",
                 "copyto",
+                "-v",
                 "--progress",
-                ftmp_path,
-                "{:s}:Colab Notebooks/{:s}".format(
-                    args.rclone_remote_name, colab_full_filename
-                ),
+                from_path,
+                to_path,
             ],
         )
         assert (
             p.returncode == 0
         ), "ERROR: install and configure rclone to use notebook upload functionallity"
+        sys.exit(0)
 
-    print(
-        "After starting the notebook user interaction is needed to mount google drive"
-    )
+    elif args.action == "nbupload":
+        assert args.local_filename
+
+        colab_filename_parts = os.path.split(args.local_filename)
+        colab_filename = colab_filename_parts[-1]
+        if args.colab_filename is not None:
+            colab_filename = args.colab_filename
+
+        nb = nbformat.read(args.local_filename, as_version=nbformat.NO_CONVERT)
+
+        # Check if first cell matches pattern, if it does update the content, otherwise add a cell above current cell
+        if args.job_name is not None:
+            first_cell = nb.cells[0]["source"]
+
+            parts = colab_filename.split(".")
+            colab_filename = "".join(
+                parts[:-1] + ["-" + args.job_name] + ["." + parts[-1]]
+            )
+
+            nb.cells[0]["source"] = re.sub(
+                JOB_NAME_PATTERN,
+                r"\g<head>\g<quote>" + args.job_name + r"\g<quote>\g<tail>",
+                nb.cells[0]["source"],
+                flags=re.MULTILINE,
+            )
+            if first_cell != nb.cells[0]["source"]:
+                logger.info("First cell was updated with supplied job name:")
+                if args.verbose:
+                    print(nb.cells[0]["source"])
+
+        if args.project_name is None:
+            p = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+            )
+            if p.returncode != 0:
+                logger.error("Could not determine project name from git")
+                project_name = ""
+            else:
+                git_url = p.stdout.decode("ascii")
+                project_name = _get_project_name(git_url)
+            project_name = _get_git_project_name() or ""
+        else:
+            project_name = args.project_name
+
+        # Colab default "metadata" configuratio for colab
+        notebook_metadata = {
+            "colab": {
+                "collapsed_sections": [],
+                "name": colab_filename,
+                "provenance": [],
+            },
+            "kernelspec": {"display_name": "Python 3", "name": "python3"},
+            "language_info": {"name": "python"},
+        }
+
+        if project_name != "":
+            colab_full_filename = project_name + "/" + colab_filename
+        else:
+            colab_full_filename = colab_filename
+
+        if args.accelerator is not None:
+            if args.accelerator == "gpu":
+                notebook_metadata["accelerator"] = "GPU"
+            else:
+                notebook_metadata["accelerator"] = "TPU"
+
+        if args.high_ram:
+            notebook_metadata["colab"]["machine_shape"] = "hm"
+            pass
+
+        if args.background_execution:
+            notebook_metadata["colab"]["background_execution"] = "on"
+
+        nb.metadata = notebook_metadata
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o777)
+            ftmp_path = os.path.join(tmp, colab_filename)
+            nbformat.write(nb, ftmp_path, version=nbformat.NO_CONVERT)
+
+            p = subprocess.run(
+                [
+                    "rclone",
+                    "copyto",
+                    "-v",
+                    "--progress",
+                    ftmp_path,
+                    "{:s}:Colab Notebooks/{:s}".format(
+                        args.rclone_remote_name, colab_full_filename
+                    ),
+                ],
+            )
+            assert (
+                p.returncode == 0
+            ), "ERROR: install and configure rclone to use notebook upload functionallity"
+
+        print(
+            "After starting the notebook user interaction is needed to mount google drive"
+        )
