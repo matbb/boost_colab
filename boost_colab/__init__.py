@@ -274,6 +274,9 @@ def initialize(
     If running outside Colab:
     Sets project path and returns.
 
+    In all cases: sets module variables pointing to data locations and project location.
+    Adds project path to pythonpath
+
         Parameters:
             git_url           : git compatible url, passed to git_clone
             job_name          : name of current job
@@ -282,10 +285,9 @@ def initialize(
             rsync_flags       : flags to pass to rsync when synchronizing project data to Google Drive
             sync_interval_s   : sync interval in seconds
             sync_data_project : how to sync data_project folder:
-                                   full : full sync with supplied rsync flags
-                                   TODO bindmount : mounts colab subfolder as readonly
+                                   "full" : full sync with supplied rsync flags
                                    <list of files> : sync only these files
-                                   no : do nothing
+                                   "no" : do nothing
             project_name      : project name, used in case git_url is None
             force             : force initialization
 
@@ -329,6 +331,9 @@ def initialize(
             else:
                 os.chdir(os.path.join(CURRENT_PROJECT_PATH, notebooks_folder))
 
+    def add_project_to_path():
+        sys.path.insert(0, CURRENT_PROJECT_PATH[:-1])
+
     if session in ["colab", "remote-colab"]:
         if os.path.exists(project_path) and force == False:
             chdir_to_notebooks()
@@ -360,7 +365,10 @@ def initialize(
             str(Path(wd_project + "/data_job").absolute()) + "/"
         )
         chdir_to_notebooks(is_colab=False)
+        add_project_to_path()
         return CURRENT_LOCAL_DATA_PROJECT_PATH, CURRENT_LOCAL_DATA_JOB_PATH
+
+    add_project_to_path()
 
     logger.info("Initialization started")
     if git_url is not None:
