@@ -645,6 +645,22 @@ class _StopExecution(Exception):
         pass
 
 
+def wait_for_sync():
+    """
+    Wait until data upload synchronization loop successfully executes at least 1 time
+
+    Returns False if sync is not running.
+    """
+    if SYNC_THREAD is None:
+        return False
+
+    sync_loop_event.clear()
+    for i in range(2):
+        sync_loop_event.wait()
+        time.sleep(SYNC_INTERVAL_S / 2)
+    return True
+
+
 def stop_interactive_nb():
     """
     In main job pauses execution when running in interactive notebook
@@ -698,29 +714,15 @@ def copy_to_persistent_project_storage(local_data_fname_path):
         logger.info(f"Copied file {local_data_fname_path} to local data_project folder")
 
 
-def crash_kernel():
+def crash_kernel(sync_first=True):
     """
     Crashes the kernel in order to force-stop execution and runtime.
     Might save runtime credits.
     """
+    if sync_first:
+        wait_for_sync()
 
     import ctypes
 
     p = ctypes.pointer(ctypes.c_char.from_address(5))
     p[0] = b"x"
-
-
-def wait_for_sync():
-    """
-    Wait until data upload synchronization loop successfully executes at least 1 time
-
-    Returns False if sync is not running.
-    """
-    if SYNC_THREAD is None:
-        return False
-
-    sync_loop_event.clear()
-    for i in range(2):
-        sync_loop_event.wait()
-        time.sleep(SYNC_INTERVAL_S / 2)
-    return True
